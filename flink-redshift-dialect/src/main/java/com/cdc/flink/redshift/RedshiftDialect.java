@@ -2,24 +2,16 @@ package com.cdc.flink.redshift;
 
 import org.apache.flink.connector.jdbc.core.database.dialect.AbstractDialect;
 import org.apache.flink.connector.jdbc.core.database.dialect.JdbcDialectConverter;
-import org.apache.flink.table.api.ValidationException;
-import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.LogicalTypeRoot;
 import org.apache.flink.table.types.logical.RowType;
 
-import java.util.Arrays;
 import java.util.EnumSet;
-import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class RedshiftDialect extends AbstractDialect {
 
     private static final long serialVersionUID = 1L;
-
-    private RowType rowType;
 
     @Override
     public String dialectName() {
@@ -27,14 +19,7 @@ public class RedshiftDialect extends AbstractDialect {
     }
 
     @Override
-    public void validate(RowType rowType) throws ValidationException {
-        this.rowType = rowType;
-        super.validate(rowType);
-    }
-
-    @Override
     public JdbcDialectConverter getRowConverter(RowType rowType) {
-        this.rowType = rowType;
         return new RedshiftDialectConverter(rowType);
     }
 
@@ -53,46 +38,16 @@ public class RedshiftDialect extends AbstractDialect {
         return "\"" + identifier + "\"";
     }
 
-    private String toRedshiftType(LogicalType type) {
-        switch (type.getTypeRoot()) {
-            case BOOLEAN:
-                return "BOOLEAN";
-            case TINYINT:
-            case SMALLINT:
-                return "SMALLINT";
-            case INTEGER:
-                return "INTEGER";
-            case BIGINT:
-                return "BIGINT";
-            case FLOAT:
-                return "REAL";
-            case DOUBLE:
-                return "DOUBLE PRECISION";
-            case DECIMAL:
-                return "DECIMAL";
-            case CHAR:
-            case VARCHAR:
-                return "VARCHAR";
-            case DATE:
-                return "DATE";
-            case TIME_WITHOUT_TIME_ZONE:
-                return "TIME";
-            case TIMESTAMP_WITHOUT_TIME_ZONE:
-                return "TIMESTAMP";
-            case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
-                return "TIMESTAMPTZ";
-            default:
-                return "VARCHAR";
-        }
-    }
-
     @Override
     public Optional<String> getUpsertStatement(
             String tableName, String[] fieldNames, String[] uniqueKeyFields) {
-        // Return empty to force Flink's fallback: SELECT exists + UPDATE/INSERT
-        // These statements target the table directly, so Redshift knows the column types.
-        // MERGE INTO ... USING (SELECT ...) doesn't work because Redshift can't infer
-        // types in a bare SELECT subquery (varchar->timestamp conversion fails).
+        // Return empty to force Flink's fallback: SELECT exists + UPDATE/INSERT.
+        // Redshift doesn't support ON CONFLICT (PostgreSQL 9.5+), and MERGE INTO
+        // with USING (SELECT ...) fails on type inference for parameterized queries.
+        // The fallback targets the table directly, so Redshift resolves column types.
+        //
+        // Trade-off: 3 round-trips per row instead of 1 MERGE.
+        // Acceptable for low-to-moderate throughput CDC workloads.
         return Optional.empty();
     }
 
@@ -112,7 +67,6 @@ public class RedshiftDialect extends AbstractDialect {
                 LogicalTypeRoot.CHAR,
                 LogicalTypeRoot.VARCHAR,
                 LogicalTypeRoot.BOOLEAN,
-                LogicalTypeRoot.VARBINARY,
                 LogicalTypeRoot.DECIMAL,
                 LogicalTypeRoot.TINYINT,
                 LogicalTypeRoot.SMALLINT,
